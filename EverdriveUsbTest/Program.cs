@@ -21,6 +21,8 @@ namespace EverdriveUsbTest
         private static SerialPort? _serialPort = null;
         private static Queue<byte> _readQueue = new Queue<byte>();
 
+        private static int _globalWriteLength = 0;
+
         static void Main(string[] args)
         {
             var ports = SerialPort.GetPortNames();
@@ -78,8 +80,18 @@ namespace EverdriveUsbTest
                 int bytesDo;
                 int bytesDone = 0;
 
-                Console.WriteLine($"Sending command: {Command_WriteRom}");
+                // if padded size is different from rom size, resize the file buffer.
+                if (size != (int)padSize)
+                {
+                    var newFileData = new byte[(int)padSize];
+                    Array.Copy(filedata, newFileData, size);
+                    filedata = newFileData;
+                }
+
+                Console.WriteLine($"Sending command: {Command_WriteRom}, write length: {bytesLeft}");
                 SendEverdriveCommand(Command_WriteRom, WriteRomTargetAddress, bytesLeft, 0);
+
+                _globalWriteLength = 0;
 
                 while (true)
                 {
@@ -109,9 +121,40 @@ namespace EverdriveUsbTest
 
                     Console.WriteLine($"loop: sent {bytesDone} out of {(int)padSize} = {percentDone:0.00}%, {bytesLeft} remain");
                 }
+
+                var serialPortWriteLength = _globalWriteLength;
+                Console.WriteLine($"serialPortWriteLength: {serialPortWriteLength}");
             }
 
-            //System.Threading.Thread.Sleep(500);
+            var startSpin = System.Diagnostics.Stopwatch.StartNew();
+            int spinCount = 0;
+
+            while (true)
+            {
+                Console.WriteLine($"Sending command: {Command_Test_Send}");
+                SendEverdriveCommand(Command_Test_Send, 0, 0, 0);
+                System.Threading.Thread.Sleep(100);
+                response = Read();
+                if (!object.ReferenceEquals(null, response))
+                {
+                    commandResponse = System.Text.Encoding.ASCII.GetString(response);
+                    Console.WriteLine($"response: {commandResponse}");
+
+                    break;
+                }
+                else
+                {
+                    Console.WriteLine($"no response");
+                    spinCount++;
+                    System.Threading.Thread.Sleep(10);
+                }
+            }
+
+            startSpin.Stop();
+
+            Console.WriteLine($"spin time: {startSpin.Elapsed.TotalSeconds}, count={spinCount}");
+
+            System.Threading.Thread.Sleep(500);
 
             SendEverdriveCommand(Command_PifBoot_Send, 0, 0, 0);
             Console.WriteLine($"Sending command: {Command_PifBoot_Send}");
@@ -170,6 +213,7 @@ namespace EverdriveUsbTest
                 }
 
                 _serialPort!.Write(data, offset, writeLength);
+                _globalWriteLength += writeLength;
 
                 remaining -= writeLength;
                 offset += writeLength;
